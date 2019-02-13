@@ -1,19 +1,27 @@
 package main
 
 import (
+	"regexp"
 	"fmt"
-	"log"			// 应该是用于日志
+	"log"			
+	"errors"
 	"net/http"
 	"io/ioutil"
 	"html/template"
 )
+
+// 缓存模板，缓存完成之后，只保存了文件名，路径名没有保留下来
+var templates = template.Must(template.ParseFiles("template/edit.html", "template/view.html"))			
+
+var validPath = regexp.MustCompile("^/(edit|save|view)/([a-zA-Z0-9]+)$")
 
 type Page struct {
 	Title string
 	Body []byte
 }
 
-func (p *Page) save() error  {						// 结构体的所属方法
+// 结构体的所属方法
+func (p *Page) save() error  {						
 	filename := p.Title + ".txt"
 	return ioutil.WriteFile(filename, p.Body, 0600)
 }
@@ -27,14 +35,18 @@ func loadPage(title string) (*Page, error) {
 	return &Page{Title: title, Body: body}, nil
 }
 
+func getTitle(w http.ResponseWriter, r *http.Request) (string, error) {			
+	m := validPath.FindStringSubmatch(r.URL.Path)
+	if m == nil {
+		http.NotFound(w, r)
+		return "", errors.New("Invalid Page Title")
+	}
+	return m[2], nil 
+}
+
 /** 渲染模板的函数 */
 func renderTemplate(w http.ResponseWriter, tmpl string, p *Page)  {			
-	t, err := template.ParseFiles(tmpl + ".html")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	err = t.Execute(w, p)
+	err := templates.ExecuteTemplate(w, tmpl + ".html", p)				// 此时 模板已经被缓存过了
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -47,12 +59,14 @@ func handler(w http.ResponseWriter, r *http.Request)  {
 func viewHandler(w http.ResponseWriter, r *http.Request)  {
 	title := r.URL.Path[len("/view/"):]
 	p, err := loadPage(title)
-	if err != nil {	// 如果页面不存在,重定向到编辑页面
+
+	// 如果页面不存在,重定向到编辑页面
+	if err != nil {	
 		http.Redirect(w, r, "/edit/" + title, http.StatusFound)
 		return
 	}
 	// fmt.Fprintf(w, "<h1>%s</h1><div>%s</div>", p.Title, p.Body)
-	renderTemplate(w, "template/view", p)
+	renderTemplate(w, "view", p)
 }
 
 func editHandler(w http.ResponseWriter, r *http.Request)  {
@@ -67,7 +81,7 @@ func editHandler(w http.ResponseWriter, r *http.Request)  {
 	// "<textarea name=\"body\">%s</textarea><br>"+
 	// "</form>",
 	// p.Title, p.Title, p.Body)
-	renderTemplate(w, "template/edit", p)
+	renderTemplate(w, "edit", p)
 }
 
 func saveHandler(w http.ResponseWriter, r *http.Request)  {
